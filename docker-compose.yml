@@ -59,6 +59,25 @@ services:
     profiles:
       - consistent-hash
 
+  clojure-app-dlq-reprocess:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clojure-app-dlq-reprocess
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - RABBITMQ_MODE=dlq-reprocess
+    networks:
+      - rabbitmq-network
+    profiles:
+      - dlq-reprocess
+
 networks:
   rabbitmq-network:
     driver: bridge
