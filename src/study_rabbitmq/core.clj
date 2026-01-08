@@ -57,7 +57,7 @@
     (log/info (format "[Consumer %d] Received: %s" consumer-id message))
     
     ;; Simulate processing and conditionally reject messages
-    (Thread/sleep (rand-int 1000))
+    (Thread/sleep (long (rand-int 1000)))
     
     (if (.contains message "FAIL")
       (do
@@ -83,17 +83,17 @@
     (let [ch (lch/open conn)]
       (log/info (format "Starting producer %d..." producer-id))
       (loop [counter 0]
-        (Thread/sleep (+ 2000 (rand-int 3000))) ;; Random delay between 2-5 seconds
-        
+        (Thread/sleep (long (+ 2000 (rand-int 3000)))) ;; Random delay between 2-5 seconds
+
         ;; 20% chance to create a message that will be rejected
         (let [should-fail (< (rand) 0.2)
               message (if should-fail
-                       (format "Producer %d - Message %d - FAIL" producer-id counter)
-                       (format "Producer %d - Message %d - OK" producer-id counter))]
-          
+                        (format "Producer %d - Message %d - FAIL" producer-id counter)
+                        (format "Producer %d - Message %d - OK" producer-id counter))]
+
           (log/info (format "[Producer %d] Publishing: %s" producer-id message))
           (lb/publish ch exchange-name routing-key message {:content-type "text/plain"
-                                                             :persistent true})
+                                                            :persistent true})
           (recur (inc counter)))))))
 
 (defn -main
