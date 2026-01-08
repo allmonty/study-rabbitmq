@@ -10,6 +10,9 @@
 
 (def ^:const hash-exchange-name "study.hash.exchange")
 (def ^:const hash-queue-prefix "study.hash.queue.")
+(def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
+(def ^:const min-publish-delay-ms 1000)
+(def ^:const max-publish-delay-ms 2000)
 
 (defn setup-connection
   "Create connection to RabbitMQ"
@@ -37,9 +40,9 @@
   (doseq [i (range num-queues)]
     (let [queue-name (str hash-queue-prefix i)]
       (lq/declare ch queue-name {:durable true})
-      ;; Bind queue with a weight (10 is a good default)
+      ;; Bind queue with a weight
       ;; The weight determines how many hash buckets are assigned to this queue
-      (lq/bind ch queue-name hash-exchange-name {:routing-key "10"})))
+      (lq/bind ch queue-name hash-exchange-name {:routing-key (str queue-weight)})))
   
   (log/info (format "Consistent Hash topology setup complete with %d queues" num-queues)))
 
@@ -74,7 +77,7 @@
           user-ids ["user-1" "user-2" "user-3" "user-4" "user-5"]]
       (log/info "Starting producer for Consistent Hash Exchange...")
       (loop [counter 0]
-        (Thread/sleep (long (+ 1000 (rand-int 2000)))) ;; Random delay between 1-3 seconds
+        (Thread/sleep (long (+ min-publish-delay-ms (rand-int max-publish-delay-ms))))
 
         ;; Pick a random user ID to demonstrate partition key behavior
         (let [user-id (rand-nth user-ids)

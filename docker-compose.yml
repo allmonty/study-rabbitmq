@@ -17,7 +17,8 @@ services:
       retries: 5
     networks:
       - rabbitmq-network
-    # Enable the consistent hash exchange plugin
+    # Enable the consistent hash exchange plugin globally
+    # Note: This plugin is enabled for the entire RabbitMQ instance and works for both basic and consistent-hash modes
     command: >
       bash -c "rabbitmq-plugins enable rabbitmq_consistent_hash_exchange &&
                rabbitmq-server"
