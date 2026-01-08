@@ -17,6 +17,10 @@ services:
       retries: 5
     networks:
       - rabbitmq-network
+    # Enable the consistent hash exchange plugin
+    command: >
+      bash -c "rabbitmq-plugins enable rabbitmq_consistent_hash_exchange &&
+               rabbitmq-server"
 
   clojure-app:
     build:
@@ -31,8 +35,28 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
+      - RABBITMQ_MODE=basic
     networks:
       - rabbitmq-network
+
+  clojure-app-consistent-hash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clojure-app-consistent-hash
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - RABBITMQ_MODE=consistent-hash
+    networks:
+      - rabbitmq-network
+    profiles:
+      - consistent-hash
 
 networks:
   rabbitmq-network:

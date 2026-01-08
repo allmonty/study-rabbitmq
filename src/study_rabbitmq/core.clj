@@ -5,7 +5,8 @@
             [langohr.exchange :as le]
             [langohr.consumers :as lc]
             [langohr.basic :as lb]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [study-rabbitmq.consistent-hash :as ch])
   (:gen-class))
 
 (def ^:const exchange-name "study.exchange")
@@ -98,34 +99,44 @@
 
 (defn -main
   [& args]
-  (log/info "Starting RabbitMQ Study Application...")
-  
-  ;; Wait a bit for RabbitMQ to be ready
-  (Thread/sleep 5000)
-  
-  (try
-    (let [conn (setup-connection)
-          setup-ch (lch/open conn)]
-      
-      ;; Setup topology
-      (setup-topology setup-ch)
-      (lch/close setup-ch)
-      
-      ;; Start 4 consumers
-      (log/info "Starting 4 consumers...")
-      (let [consumers (doall (map #(start-consumer conn %) (range 1 5)))]
-        
-        ;; Start 2 producers
-        (log/info "Starting 2 producers...")
-        (let [producers (doall (map #(start-producer conn %) (range 1 3)))]
-          
-          (log/info "Application running. Press Ctrl+C to stop.")
-          (log/info "RabbitMQ Management UI available at http://localhost:15672")
-          (log/info "Default credentials - username: guest, password: guest")
-          
-          ;; Keep the application running
-          @(promise))))
+  (let [mode (or (System/getenv "RABBITMQ_MODE") "basic")]
+    (log/info (format "Starting RabbitMQ Study Application in mode: %s" mode))
     
-    (catch Exception e
-      (log/error e "Error in main application")
-      (System/exit 1))))
+    (cond
+      (= mode "consistent-hash")
+      (do
+        (log/info "Running Consistent Hash Exchange example...")
+        (ch/run-consistent-hash-example 3))
+      
+      :else
+      (do
+        (log/info "Running basic exchange example with DLQ...")
+        ;; Wait a bit for RabbitMQ to be ready
+        (Thread/sleep 5000)
+        
+        (try
+          (let [conn (setup-connection)
+                setup-ch (lch/open conn)]
+            
+            ;; Setup topology
+            (setup-topology setup-ch)
+            (lch/close setup-ch)
+            
+            ;; Start 4 consumers
+            (log/info "Starting 4 consumers...")
+            (let [consumers (doall (map #(start-consumer conn %) (range 1 5)))]
+              
+              ;; Start 2 producers
+              (log/info "Starting 2 producers...")
+              (let [producers (doall (map #(start-producer conn %) (range 1 3)))]
+                
+                (log/info "Application running. Press Ctrl+C to stop.")
+                (log/info "RabbitMQ Management UI available at http://localhost:15672")
+                (log/info "Default credentials - username: guest, password: guest")
+                
+                ;; Keep the application running
+                @(promise))))
+          
+          (catch Exception e
+            (log/error e "Error in main application")
+            (System/exit 1)))))))
