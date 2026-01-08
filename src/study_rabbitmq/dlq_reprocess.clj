@@ -15,6 +15,7 @@
 (def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
 (def ^:const min-publish-delay-ms 1000)
 (def ^:const max-publish-delay-ms 2000)
+(def ^:const rabbitmq-startup-wait-ms 5000) ;; Wait time for RabbitMQ to be ready
 (def user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
 
 (defn setup-connection
@@ -168,7 +169,7 @@
   (log/info "3. DLQ consumer automatically reprocesses and republishes dead letters")
   (log/info (format "Messages with the same routing key (user-id) will always go to the same queue"))
   
-  (Thread/sleep 5000) ;; Wait for RabbitMQ to be ready
+  (Thread/sleep rabbitmq-startup-wait-ms) ;; Wait for RabbitMQ to be ready
   
   (try
     (let [conn (setup-connection)
