@@ -15,6 +15,7 @@
 (def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
 (def ^:const min-publish-delay-ms 1000)
 (def ^:const max-publish-delay-ms 2000)
+(def user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
 
 (defn setup-connection
   "Create connection to RabbitMQ"
@@ -87,7 +88,7 @@
     
     ;; Extract the original user-id from the message (assuming format: "Message X for user-Y")
     ;; For reprocessing, we'll use the same routing key to maintain consistent hashing
-    (let [user-id-match (re-find #"(user-\d+)" message)
+    (let [user-id-match (re-find user-id-pattern message)
           user-id (if user-id-match
                     (second user-id-match)
                     "user-1")] ;; fallback to user-1 if pattern doesn't match
