@@ -15,7 +15,7 @@
 (def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
 (def ^:const min-publish-delay-ms 1000)
 (def ^:const max-publish-delay-ms 2000)
-(def user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
+(def ^:const user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
 
 (defn setup-connection
   "Create connection to RabbitMQ"
@@ -81,32 +81,39 @@
   "Special handler for consuming messages from the dead letter queue
    This consumer logs the message and republishes it back to the main exchange"
   [conn ch {:keys [delivery-tag]} ^bytes payload]
-  (let [message (String. payload "UTF-8")
-        republish-ch (lch/open conn)]
+  (let [message (String. payload "UTF-8")]
     (log/info (format "[DLQ Consumer] Received dead letter message: %s" message))
     (log/info (format "[DLQ Consumer] Reprocessing and republishing message to main exchange..."))
     
-    ;; Extract the original user-id from the message (assuming format: "Message X for user-Y")
-    ;; For reprocessing, we'll use the same routing key to maintain consistent hashing
-    (let [user-id-match (re-find user-id-pattern message)
-          user-id (if user-id-match
-                    (second user-id-match)
-                    (do
-                      (log/warn (format "[DLQ Consumer] Could not extract user-id from message, using fallback 'user-1': %s" message))
-                      "user-1"))] ;; fallback to user-1 if pattern doesn't match
-      
-      (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
-      
-      ;; Republish the message to the main exchange with the original routing key
-      (lb/publish republish-ch hash-exchange-name user-id message 
-                  {:content-type "text/plain"
-                   :persistent true})
-      
-      ;; Acknowledge the message from DLQ after successful republish
-      (lb/ack ch delivery-tag)
-      (lch/close republish-ch)
-      
-      (log/info (format "[DLQ Consumer] Successfully reprocessed and acknowledged: %s" message)))))
+    (try
+      (let [republish-ch (lch/open conn)]
+        (try
+          ;; Extract the original user-id from the message (assuming format: "Message X for user-Y")
+          ;; For reprocessing, we'll use the same routing key to maintain consistent hashing
+          (let [user-id-match (re-find user-id-pattern message)
+                user-id (if user-id-match
+                          (second user-id-match)
+                          (do
+                            (log/warn (format "[DLQ Consumer] Could not extract user-id from message, using fallback 'user-1': %s" message))
+                            "user-1"))] ;; fallback to user-1 if pattern doesn't match
+            
+            (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
+            
+            ;; Republish the message to the main exchange with the original routing key
+            (lb/publish republish-ch hash-exchange-name user-id message 
+                        {:content-type "text/plain"
+                         :persistent true})
+            
+            ;; Only acknowledge the message from DLQ after successful republish
+            (lb/ack ch delivery-tag)
+            
+            (log/info (format "[DLQ Consumer] Successfully reprocessed and acknowledged: %s" message)))
+          (finally
+            (lch/close republish-ch))))
+      (catch Exception e
+        (log/error e (format "[DLQ Consumer] Failed to reprocess message, will retry: %s" message))
+        ;; Do not acknowledge - message will be retried
+        ))))
 
 (defn start-consumer
   "Start a consumer for a specific queue"
