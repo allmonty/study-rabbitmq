@@ -15,7 +15,7 @@
 (def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
 (def ^:const min-publish-delay-ms 1000)
 (def ^:const max-publish-delay-ms 2000)
-(def ^:const user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
+(def user-id-pattern #"(user-\d+)") ;; Pre-compiled regex for extracting user-id from messages
 
 (defn setup-connection
   "Create connection to RabbitMQ"
