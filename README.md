@@ -33,6 +33,8 @@ This project demonstrates:
 - **Hash Queues**: `study.dlq-reprocess.hash.queue.0`, `study.dlq-reprocess.hash.queue.1`, `study.dlq-reprocess.hash.queue.2` (3 queues with DLQ configuration)
 - **Dead Letter Exchange**: `study.dlq-reprocess.dlx` (direct)
 - **Dead Letter Queue**: `study.dlq-reprocess.dlq`
+- **Unparseable Exchange**: `study.dlq-reprocess.unparseable.exchange` (direct)
+- **Unparseable Queue**: `study.dlq-reprocess.unparseable.queue` (for messages without extractable user-id)
 - **DLQ Consumer**: Special consumer that logs and republishes dead letters back to the main exchange
 - **Routing**: Maintains consistent hash routing per user-id for both normal processing and reprocessing
 
@@ -44,7 +46,9 @@ This project demonstrates:
    - Messages with "FAIL" are rejected → routed to DLQ
    - Normal messages are acknowledged
 4. Messages also have a 30-second TTL for testing
-5. **DLQ Reprocess mode**: DLQ consumer automatically republishes dead letters back to the main exchange
+5. **DLQ Reprocess mode**: 
+   - DLQ consumer automatically republishes dead letters back to the main exchange
+   - Messages without extractable user-id are moved to the unparseable queue for manual inspection
 
 ## Prerequisites
 
@@ -133,8 +137,9 @@ In the RabbitMQ Management UI, you can:
 2. **Queues Tab**: 
    - View `study.dlq-reprocess.hash.queue.0`, `study.dlq-reprocess.hash.queue.1`, `study.dlq-reprocess.hash.queue.2`
    - View `study.dlq-reprocess.dlq` (dead letter queue) - see rejected messages being reprocessed
+   - View `study.dlq-reprocess.unparseable.queue` (unparseable messages queue) - messages without user-id
    - Notice how DLQ queue count fluctuates as messages are consumed and republished
-3. **Exchanges Tab**: View the `study.dlq-reprocess.hash.exchange` (type: x-consistent-hash) and `study.dlq-reprocess.dlx`
+3. **Exchanges Tab**: View the `study.dlq-reprocess.hash.exchange` (type: x-consistent-hash), `study.dlq-reprocess.dlx`, and `study.dlq-reprocess.unparseable.exchange`
 
 ### Viewing Logs
 
@@ -189,11 +194,19 @@ Notice how all messages with routing-key 'user-1' go to the same queue (Queue 0)
 [Queue 1] Received message with routing-key 'user-2': Message 3 for user-2 - FAIL
 ```
 
+**Example of unparseable message handling:**
+```
+[DLQ Consumer] Received dead letter message: Invalid message without user-id
+[DLQ Consumer] Could not extract user-id from message, moving to unparseable queue: Invalid message without user-id
+[DLQ Consumer] Message moved to unparseable queue: Invalid message without user-id
+```
+
 Notice how:
 - Failed messages go to the DLQ
 - The DLQ consumer automatically reprocesses and republishes them
 - Messages maintain their user-id routing key for consistent hash routing
 - The same message may fail again and create a reprocessing loop (demonstrating the concept)
+- Messages without extractable user-id are moved to a separate unparseable queue for manual inspection
 
 ### Stop the Application
 
@@ -291,6 +304,7 @@ This example combines consistent hash routing with automatic dead letter reproce
 5. **DLQ Consumer**: A special consumer monitors the DLQ, logs the message, and republishes it to the main exchange
 6. **Maintains Routing**: The DLQ consumer extracts the original user-id and uses it as the routing key for republishing
 7. **Consistent Hash Preserved**: Republished messages go to the same queue as the original (same user-id → same queue)
+8. **Unparseable Messages**: Messages without extractable user-id are moved to a separate unparseable queue for manual inspection
 
 #### Example Flow
 
@@ -307,6 +321,11 @@ DLQ Consumer:
 Queue 1 Consumer:
   - Receives Message 2 for user-2 again
   - May fail again (creating a loop for demonstration)
+
+Unparseable Message:
+  - DLQ Consumer receives message without user-id
+  - Logs: "Could not extract user-id, moving to unparseable queue"
+  - Message moved to unparseable queue for manual inspection
 ```
 
 #### Benefits
@@ -314,6 +333,7 @@ Queue 1 Consumer:
 - **Automatic Retry**: Failed messages are automatically retried without manual intervention
 - **Maintains Ordering**: Reprocessed messages maintain their routing key, preserving ordered processing
 - **Observability**: DLQ consumer logs all reprocessing activities
+- **Error Handling**: Messages without user-id are safely isolated in unparseable queue
 - **Flexible**: Can be extended to add retry limits, backoff strategies, or conditional reprocessing
 
 #### Use Cases

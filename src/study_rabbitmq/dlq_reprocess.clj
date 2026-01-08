@@ -12,6 +12,8 @@
 (def ^:const hash-queue-prefix "study.dlq-reprocess.hash.queue.")
 (def ^:const dead-letter-exchange "study.dlq-reprocess.dlx")
 (def ^:const dead-letter-queue "study.dlq-reprocess.dlq")
+(def ^:const unparseable-exchange "study.dlq-reprocess.unparseable.exchange")
+(def ^:const unparseable-queue "study.dlq-reprocess.unparseable.queue")
 (def ^:const queue-weight 10) ;; Weight determines hash bucket distribution
 (def ^:const min-publish-delay-ms 1000)
 (def ^:const max-publish-delay-ms 2000)
@@ -41,6 +43,11 @@
   (lq/declare ch dead-letter-queue {:durable true})
   (lq/bind ch dead-letter-queue dead-letter-exchange {:routing-key "dlq"})
   
+  ;; Create unparseable messages exchange and queue
+  (le/declare ch unparseable-exchange "direct" {:durable true})
+  (lq/declare ch unparseable-queue {:durable true})
+  (lq/bind ch unparseable-queue unparseable-exchange {:routing-key "unparseable"})
+  
   ;; Create the consistent hash exchange
   ;; The 'x-consistent-hash' type distributes messages based on routing key hash
   (le/declare ch hash-exchange-name "x-consistent-hash" {:durable true})
@@ -56,7 +63,7 @@
       ;; Bind queue with a weight
       (lq/bind ch queue-name hash-exchange-name {:routing-key (str queue-weight)})))
   
-  (log/info (format "DLQ Reprocess topology setup complete with %d queues and DLQ configured" num-queues)))
+  (log/info (format "DLQ Reprocess topology setup complete with %d queues, DLQ, and unparseable queue configured" num-queues)))
 
 (defn message-handler
   "Handler for consuming messages from a specific queue"
@@ -80,35 +87,44 @@
 
 (defn dlq-consumer-handler
   "Special handler for consuming messages from the dead letter queue
-   This consumer logs the message and republishes it back to the main exchange"
+   This consumer logs the message and republishes it back to the main exchange.
+   Messages that cannot be parsed (no user-id) are sent to the unparseable queue."
   [conn ch {:keys [delivery-tag]} ^bytes payload]
   (let [message (String. payload "UTF-8")]
     (log/info (format "[DLQ Consumer] Received dead letter message: %s" message))
-    (log/info (format "[DLQ Consumer] Reprocessing and republishing message to main exchange..."))
     
     (try
       (let [republish-ch (lch/open conn)]
         (try
           ;; Extract the original user-id from the message (assuming format: "Message X for user-Y")
           ;; For reprocessing, we'll use the same routing key to maintain consistent hashing
-          (let [user-id-match (re-find user-id-pattern message)
-                user-id (if user-id-match
-                          (second user-id-match)
-                          (do
-                            (log/warn (format "[DLQ Consumer] Could not extract user-id from message, using fallback 'user-1': %s" message))
-                            "user-1"))] ;; fallback to user-1 if pattern doesn't match
+          (let [user-id-match (re-find user-id-pattern message)]
+            (if user-id-match
+              ;; User-id found - republish to main exchange
+              (let [user-id (second user-id-match)]
+                (log/info (format "[DLQ Consumer] Reprocessing and republishing message to main exchange..."))
+                (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
+                
+                ;; Republish the message to the main exchange with the original routing key
+                (lb/publish republish-ch hash-exchange-name user-id message 
+                            {:content-type "text/plain"
+                             :persistent true})
+                
+                (log/info (format "[DLQ Consumer] Successfully reprocessed and acknowledged: %s" message)))
+              
+              ;; User-id not found - send to unparseable queue
+              (do
+                (log/warn (format "[DLQ Consumer] Could not extract user-id from message, moving to unparseable queue: %s" message))
+                
+                ;; Publish to unparseable queue
+                (lb/publish republish-ch unparseable-exchange "unparseable" message
+                            {:content-type "text/plain"
+                             :persistent true})
+                
+                (log/info (format "[DLQ Consumer] Message moved to unparseable queue: %s" message))))
             
-            (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
-            
-            ;; Republish the message to the main exchange with the original routing key
-            (lb/publish republish-ch hash-exchange-name user-id message 
-                        {:content-type "text/plain"
-                         :persistent true})
-            
-            ;; Only acknowledge the message from DLQ after successful republish
-            (lb/ack ch delivery-tag)
-            
-            (log/info (format "[DLQ Consumer] Successfully reprocessed and acknowledged: %s" message)))
+            ;; Only acknowledge the message from DLQ after successful republish/move
+            (lb/ack ch delivery-tag))
           (finally
             (lch/close republish-ch))))
       (catch Exception e
