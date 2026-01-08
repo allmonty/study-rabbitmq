@@ -91,7 +91,9 @@
     (let [user-id-match (re-find user-id-pattern message)
           user-id (if user-id-match
                     (second user-id-match)
-                    "user-1")] ;; fallback to user-1 if pattern doesn't match
+                    (do
+                      (log/warn (format "[DLQ Consumer] Could not extract user-id from message, using fallback 'user-1': %s" message))
+                      "user-1"))] ;; fallback to user-1 if pattern doesn't match
       
       (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
       
