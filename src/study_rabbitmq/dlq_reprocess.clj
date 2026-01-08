@@ -79,7 +79,7 @@
 (defn dlq-consumer-handler
   "Special handler for consuming messages from the dead letter queue
    This consumer logs the message and republishes it back to the main exchange"
-  [conn ch {:keys [delivery-tag routing-key]} ^bytes payload]
+  [conn ch {:keys [delivery-tag]} ^bytes payload]
   (let [message (String. payload "UTF-8")
         republish-ch (lch/open conn)]
     (log/info (format "[DLQ Consumer] Received dead letter message: %s" message))
@@ -87,8 +87,9 @@
     
     ;; Extract the original user-id from the message (assuming format: "Message X for user-Y")
     ;; For reprocessing, we'll use the same routing key to maintain consistent hashing
-    (let [user-id (if (re-find #"user-\d+" message)
-                    (second (re-find #"(user-\d+)" message))
+    (let [user-id-match (re-find #"(user-\d+)" message)
+          user-id (if user-id-match
+                    (second user-id-match)
                     "user-1")] ;; fallback to user-1 if pattern doesn't match
       
       (log/info (format "[DLQ Consumer] Republishing with routing-key '%s': %s" user-id message))
