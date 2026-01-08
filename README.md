@@ -1,6 +1,6 @@
 # Study RabbitMQ
 
-A prototype Clojure application to study RabbitMQ communication patterns, including producers, consumers, dead letter queues, and consistent hash exchanges for ordered message processing.
+A prototype Clojure application to study RabbitMQ communication patterns, including producers, consumers, dead letter queues, consistent hash exchanges for ordered message processing, and automatic dead-letter reprocessing.
 
 ## Overview
 
@@ -9,6 +9,7 @@ This project demonstrates:
 - **4 Consumers**: Read and acknowledge messages from the queue
 - **Dead Letter Queue (DLQ)**: Messages marked as "FAIL" are rejected and routed to a dead letter queue
 - **Consistent Hash Exchange**: Messages routed by hash of routing key, similar to Kafka partition keys for ordered processing
+- **DLQ Reprocessing**: Automatic reprocessing of dead letters with consistent hash routing per user-id
 - **RabbitMQ Management UI**: Monitor messages and queues through a web browser
 
 ## Architecture
@@ -26,14 +27,28 @@ This project demonstrates:
 - **Hash Queues**: `study.hash.queue.0`, `study.hash.queue.1`, `study.hash.queue.2` (3 queues like Kafka partitions)
 - **Routing**: Messages with the same routing key (user-id) always go to the same queue, ensuring ordered processing
 
+### DLQ Reprocess with Consistent Hash Example
+
+- **Hash Exchange**: `study.dlq-reprocess.hash.exchange` (x-consistent-hash)
+- **Hash Queues**: `study.dlq-reprocess.hash.queue.0`, `study.dlq-reprocess.hash.queue.1`, `study.dlq-reprocess.hash.queue.2` (3 queues with DLQ configuration)
+- **Dead Letter Exchange**: `study.dlq-reprocess.dlx` (direct)
+- **Dead Letter Queue**: `study.dlq-reprocess.dlq`
+- **Unparseable Exchange**: `study.dlq-reprocess.unparseable.exchange` (direct)
+- **Unparseable Queue**: `study.dlq-reprocess.unparseable.queue` (for messages without extractable user-id)
+- **DLQ Consumer**: Special consumer that logs and republishes dead letters back to the main exchange
+- **Routing**: Maintains consistent hash routing per user-id for both normal processing and reprocessing
+
 ### Message Flow
 
 1. Producers publish messages every 2-5 seconds
-2. 20% of messages are marked with "FAIL" suffix
+2. 20% of messages are marked with "FAIL" suffix (30% in dlq-reprocess mode)
 3. Consumers process messages:
    - Messages with "FAIL" are rejected → routed to DLQ
    - Normal messages are acknowledged
 4. Messages also have a 30-second TTL for testing
+5. **DLQ Reprocess mode**: 
+   - DLQ consumer automatically republishes dead letters back to the main exchange
+   - Messages without extractable user-id are moved to the unparseable queue for manual inspection
 
 ## Prerequisites
 
@@ -69,6 +84,24 @@ This will:
 4. Start 1 producer and 3 consumers (one per queue)
 5. Demonstrate ordered message processing per user-id (routing key)
 
+### Start the DLQ Reprocess with Consistent Hash Example
+
+To run the DLQ reprocessing example with consistent hash routing:
+
+```bash
+docker-compose --profile dlq-reprocess up --build
+```
+
+This will:
+1. Start RabbitMQ with the consistent hash exchange plugin enabled
+2. Build and start the Clojure application in dlq-reprocess mode
+3. Create a consistent hash exchange with 3 queues (with DLQ configuration)
+4. Start 1 producer, 3 consumers (one per queue), and 1 DLQ consumer
+5. Demonstrate:
+   - Ordered message processing per user-id (routing key)
+   - Failed messages going to the dead letter queue
+   - Automatic reprocessing and republishing of dead letters by the DLQ consumer
+
 ### Access RabbitMQ Management UI
 
 Open your browser and navigate to:
@@ -99,6 +132,15 @@ In the RabbitMQ Management UI, you can:
    - Notice messages are distributed across queues based on routing key hash
 3. **Exchanges Tab**: View the `study.hash.exchange` (type: x-consistent-hash)
 
+**For DLQ Reprocess Example:**
+1. **Overview Tab**: See connection and message statistics
+2. **Queues Tab**: 
+   - View `study.dlq-reprocess.hash.queue.0`, `study.dlq-reprocess.hash.queue.1`, `study.dlq-reprocess.hash.queue.2`
+   - View `study.dlq-reprocess.dlq` (dead letter queue) - see rejected messages being reprocessed
+   - View `study.dlq-reprocess.unparseable.queue` (unparseable messages queue) - messages without user-id
+   - Notice how DLQ queue count fluctuates as messages are consumed and republished
+3. **Exchanges Tab**: View the `study.dlq-reprocess.hash.exchange` (type: x-consistent-hash), `study.dlq-reprocess.dlx`, and `study.dlq-reprocess.unparseable.exchange`
+
 ### Viewing Logs
 
 To see application logs for the basic example:
@@ -111,6 +153,12 @@ To see application logs for the consistent hash example:
 
 ```bash
 docker-compose logs -f clojure-app-consistent-hash
+```
+
+To see application logs for the DLQ reprocess example:
+
+```bash
+docker-compose logs -f clojure-app-dlq-reprocess
 ```
 
 **Basic example output:**
@@ -134,6 +182,32 @@ docker-compose logs -f clojure-app-consistent-hash
 
 Notice how all messages with routing-key 'user-1' go to the same queue (Queue 0), ensuring ordered processing.
 
+**DLQ reprocess example output:**
+```
+[Producer] Publishing with routing-key 'user-2': Message 3 for user-2 - FAIL
+[Queue 1] Received message with routing-key 'user-2': Message 3 for user-2 - FAIL
+[Queue 1] Rejecting message (will go to DLQ): Message 3 for user-2 - FAIL
+[DLQ Consumer] Received dead letter message: Message 3 for user-2 - FAIL
+[DLQ Consumer] Reprocessing and republishing message to main exchange...
+[DLQ Consumer] Republishing with routing-key 'user-2': Message 3 for user-2 - FAIL
+[DLQ Consumer] Successfully reprocessed and acknowledged: Message 3 for user-2 - FAIL
+[Queue 1] Received message with routing-key 'user-2': Message 3 for user-2 - FAIL
+```
+
+**Example of unparseable message handling:**
+```
+[DLQ Consumer] Received dead letter message: Invalid message without user-id
+[DLQ Consumer] Could not extract user-id from message, moving to unparseable queue: Invalid message without user-id
+[DLQ Consumer] Message moved to unparseable queue: Invalid message without user-id
+```
+
+Notice how:
+- Failed messages go to the DLQ
+- The DLQ consumer automatically reprocesses and republishes them
+- Messages maintain their user-id routing key for consistent hash routing
+- The same message may fail again and create a reprocessing loop (demonstrating the concept)
+- Messages without extractable user-id are moved to a separate unparseable queue for manual inspection
+
 ### Stop the Application
 
 ```bash
@@ -150,7 +224,8 @@ docker-compose down
 ├── src/
 │   └── study_rabbitmq/
 │       ├── core.clj           # Main application code (basic + DLQ example)
-│       └── consistent_hash.clj # Consistent hash exchange example
+│       ├── consistent_hash.clj # Consistent hash exchange example
+│       └── dlq_reprocess.clj  # DLQ reprocessing with consistent hash example
 └── README.md
 ```
 
@@ -214,6 +289,60 @@ Producer sends:
 - Sequential transaction processing per customer
 - Any scenario where ordering matters within a logical grouping (user, session, tenant, etc.)
 
+### DLQ Reprocess with Consistent Hash Example - Automatic Dead Letter Reprocessing
+
+#### What is DLQ Reprocessing?
+
+This example combines consistent hash routing with automatic dead letter reprocessing. When messages fail and go to the dead letter queue, a special DLQ consumer automatically republishes them back to the main exchange, maintaining the same routing key for consistent hash routing.
+
+#### How it Works
+
+1. **Consistent Hash Exchange**: `x-consistent-hash` - distributes messages using consistent hashing by user-id
+2. **Multiple Queues with DLQ Configuration**: 3 queues are created with dead letter exchange configuration
+3. **Message Processing**: Normal consumers process messages and reject ones containing "FAIL"
+4. **Dead Letter Queue**: Failed messages are routed to the DLQ
+5. **DLQ Consumer**: A special consumer monitors the DLQ, logs the message, and republishes it to the main exchange
+6. **Maintains Routing**: The DLQ consumer extracts the original user-id and uses it as the routing key for republishing
+7. **Consistent Hash Preserved**: Republished messages go to the same queue as the original (same user-id → same queue)
+8. **Unparseable Messages**: Messages without extractable user-id are moved to a separate unparseable queue for manual inspection
+
+#### Example Flow
+
+```
+Producer sends:
+  - Message 1 for user-1 (OK) → Queue 0 → Processed successfully
+  - Message 2 for user-2 (FAIL) → Queue 1 → Rejected → DLQ
+  
+DLQ Consumer:
+  - Receives Message 2 for user-2 from DLQ
+  - Logs: "Reprocessing and republishing message..."
+  - Republishes with routing-key "user-2" → Queue 1 (same queue!)
+  
+Queue 1 Consumer:
+  - Receives Message 2 for user-2 again
+  - May fail again (creating a loop for demonstration)
+
+Unparseable Message:
+  - DLQ Consumer receives message without user-id
+  - Logs: "Could not extract user-id, moving to unparseable queue"
+  - Message moved to unparseable queue for manual inspection
+```
+
+#### Benefits
+
+- **Automatic Retry**: Failed messages are automatically retried without manual intervention
+- **Maintains Ordering**: Reprocessed messages maintain their routing key, preserving ordered processing
+- **Observability**: DLQ consumer logs all reprocessing activities
+- **Error Handling**: Messages without user-id are safely isolated in unparseable queue
+- **Flexible**: Can be extended to add retry limits, backoff strategies, or conditional reprocessing
+
+#### Use Cases
+
+- Automatic retry of transient failures (network errors, temporary unavailability)
+- Message reprocessing after fixing downstream issues
+- Monitoring and alerting on repeated failures
+- Building resilient message processing pipelines
+
 ## Development
 
 ### Running Locally (without Docker)
@@ -244,5 +373,8 @@ This prototype helps you understand:
 - **Consistent Hash Exchange for ordered message processing**
 - **How to achieve Kafka-like partition key behavior in RabbitMQ**
 - **Message ordering guarantees using routing keys**
+- **Automatic dead letter reprocessing and republishing**
+- **Building resilient message processing pipelines with DLQ consumers**
+- **Combining consistent hashing with dead letter handling**
 - Monitoring and debugging with RabbitMQ Management UI
 - Containerization with Docker Compose

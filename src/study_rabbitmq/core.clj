@@ -6,7 +6,8 @@
             [langohr.consumers :as lc]
             [langohr.basic :as lb]
             [clojure.tools.logging :as log]
-            [study-rabbitmq.consistent-hash :as ch])
+            [study-rabbitmq.consistent-hash :as ch]
+            [study-rabbitmq.dlq-reprocess :as dlq])
   (:gen-class))
 
 (def ^:const exchange-name "study.exchange")
@@ -107,6 +108,11 @@
       (do
         (log/info "Running Consistent Hash Exchange example...")
         (ch/run-consistent-hash-example 3))
+      
+      (= mode "dlq-reprocess")
+      (do
+        (log/info "Running DLQ Reprocess with Consistent Hash Exchange example...")
+        (dlq/run-dlq-reprocess-example 3))
       
       :else
       (do
