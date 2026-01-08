@@ -40,8 +40,36 @@
   (doseq [i (range num-queues)]
     (let [queue-name (str hash-queue-prefix i)]
       (lq/declare ch queue-name {:durable true})
-      ;; Bind queue with a weight
-      ;; The weight determines how many hash buckets are assigned to this queue
+       ;; Bind queue with a weight
+        ;; The weight determines how many hash buckets are assigned to this queue
+        ;; Documentation:
+        ;; Binds a queue to a RabbitMQ consistent-hash exchange using the queue's weight
+        ;; as the binding key (converted to a string).
+        ;;
+        ;; How weight = 10 makes the consistent-hash exchange work:
+        ;; - In the consistent-hash exchange, a queue's binding key is treated as its
+        ;;   weight (i.e., the number of virtual nodes/slots that queue occupies on the
+        ;;   hash ring).
+        ;; - Setting queue-weight to 10 and using (str queue-weight) causes the queue to
+        ;;   be represented 10 times on the ring, increasing its share of the ring.
+        ;; - When a message is published, the exchange hashes the message's routing key,
+        ;;   maps the hash to a position on the ring, and delivers the message to the
+        ;;   queue that owns that position.
+        ;; - With weight 10, this queue will receive approximately 10× the messages of
+        ;;   a queue with weight 1 (distribution is proportional to each queue's weight
+        ;;   relative to the total weight of all bindings).
+        ;;
+        ;; Can this be any other number if all queues use the same weight?
+        ;; - Yes. The exchange uses relative weights, so if every queue is bound with the
+        ;;   same positive integer weight, the absolute value doesn't change distribution:
+        ;;   using 1, 10 or 100 for all queues results in an equal split across queues.
+        ;; - Use any positive integer; zero or negative values are invalid. Larger values
+        ;;   increase the number of virtual nodes and give finer granularity, but provide
+        ;;   no benefit when all queues have identical weights.
+        ;; - If you want uneven distribution, give different queues different integer weights.
+        ;;
+        ;; Note: Binding keys are strings in AMQP, so converting the numeric weight to a
+        ;; string is required.
       (lq/bind ch queue-name hash-exchange-name {:routing-key (str queue-weight)})))
   
   (log/info (format "Consistent Hash topology setup complete with %d queues" num-queues)))
